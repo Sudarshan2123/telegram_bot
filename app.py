@@ -24,32 +24,47 @@ tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     process = psutil.Process(os.getpid())
-    print(f"🔵 Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+
+    print(f"Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+
     state.llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-pro",
+        model="gemini-1.5-flash",
         google_api_key=os.getenv("GEMINI_API_KEY"),
         temperature=0.7,
-        max_tokens=2048
+        max_tokens=1024
     )
-    print(f"🔵 After LLM init: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+    print(f"After LLM init: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+
     state.chatllm = ChatGroq(
-        model="llama-3.1-8b-instant",   
+        model="llama-3.1-8b-instant",
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.7,
-        max_tokens=2048
+        max_tokens=1024
     )
-    print(f"🔵 After ChatLLM: {process.memory_info().rss / 1024 / 1024:.1f} MB")
-    state.agent = create_flow_graph(state.chatllm)
+    print(f"After ChatLLM: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+
+    state.agent = create_flow_graph(state.llm, state.chatllm)
+    print(f"After agent: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     await tg_app.initialize()
+
     webhook_url = f"{os.getenv('RENDER_URL')}/telegram/{TELEGRAM_BOT_TOKEN}"
-    await tg_app.bot.set_webhook(webhook_url)
-    print(f"Webhook set to {webhook_url}")
+
+    await tg_app.bot.set_webhook(
+        url=webhook_url,
+        drop_pending_updates=True
+    )
+
+    info = await tg_app.bot.get_webhook_info()
+    if info.url == webhook_url:
+        print(f"Webhook confirmed: {info.url}")
+    else:
+        print(f"Webhook mismatch! Expected: {webhook_url} Got: {info.url}")
 
     yield
 
-    await tg_app.bot.delete_webhook()
     await tg_app.shutdown()
+    print("Shutdown complete — webhook kept alive")
 
 
 app = FastAPI(lifespan=lifespan)
