@@ -147,3 +147,7 @@ async def telegram_webhook(request: Request):
     update = Update.de_json(data, tg_app.bot)
     await tg_app.process_update(update)
     return {"status": "ok"}
+
+@app.get("/")
+async def root():
+    return {"status": "online"}
