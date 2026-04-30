@@ -148,6 +148,6 @@ async def telegram_webhook(request: Request):
     await tg_app.process_update(update)
     return {"status": "ok"}
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     return {"status": "online"}
