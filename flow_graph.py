@@ -1,4 +1,4 @@
-from langgraph.graph import StateGraph
+from langgraph.graph import START, StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 from state_node import StateNode
 
@@ -25,3 +25,9 @@ def create_flow_graph()->StateGraph:
     graph=StateGraph(StateNode)
     graph.add_node("Router",Orchesterator)
     graph.add_node("Analyze",Analyze_Photo)
+
+    graph.add_edge(START, "Router")
+    graph.add_edge("Router","Analyze")
+    
+
+    return graph,compile
