@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
         temperature=0.7,
         max_tokens=2048
     )
-    state.agent = create_flow_graph(state.llm, state.chatllm)
+    state.agent = create_flow_graph(state.chatllm)
 
     await tg_app.initialize()
     webhook_url = f"{os.getenv('RENDER_URL')}/telegram/{TELEGRAM_BOT_TOKEN}"
