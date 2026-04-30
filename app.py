@@ -28,6 +28,7 @@ tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize LLMs
+    global _graph
     state.llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-pro",
         google_api_key=os.getenv("GEMINI_API_KEY"),
@@ -40,7 +41,7 @@ async def lifespan(app: FastAPI):
         temperature=0.7,
         max_tokens=2048
     )
-    state.agent = create_flow_graph()
+    _graph = create_flow_graph()
 
     # Register Telegram webhook
     await tg_app.initialize()
@@ -70,7 +71,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
-    response = await state.agent.ainvoke({
+    response = await _graph.ainvoke({
         "messages": [HumanMessage(content=user_msg)]
     })
     agent_response = response["messages"][-1].content
@@ -92,7 +93,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     caption = update.message.caption or "Analyse the photo and provide insights."
 
-    response = await state.agent.ainvoke({
+    response = await _graph.ainvoke({
         "messages": [HumanMessage(content=[
             {
                 "type": "image_url",
@@ -119,7 +120,7 @@ async def handle_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         caption = update.message.caption or "Describe this image"
 
-        response = await state.agent.ainvoke({
+        response = await _graph.ainvoke({
             "messages": [HumanMessage(content=[
                 {
                     "type": "image_url",
