@@ -11,11 +11,11 @@ async def Orchesterator(state: StateNode,chatllm):
     intent = await chatllm.ainvoke([system_msg, messages])
     return {"messages":[intent]}
 
-async def Analyze_Photo(state: StateNode):
+async def Analyze_Photo(state: StateNode,chatllm):
     """Analyze photo content."""
     messages = state.get("messages")[-1]
     system_msg = "You are an image analysis assistant. get all the content of the image in detail. for future Analysis"
-    analysis = await state.agent.ainvoke({
+    analysis = await chatllm.ainvoke({
         "messages": [system_msg, *messages]
     })
     return analysis["messages"][-1].content
@@ -26,7 +26,7 @@ def create_flow_graph(chatllm)->StateGraph:
     """Create a flow graph for the Telegram Agentic Bot."""
     graph=StateGraph(StateNode)
     graph.add_node("Router",partial(Orchesterator, chatllm=chatllm))
-    graph.add_node("Analyze",Analyze_Photo)
+    graph.add_node("Analyze",partial(Analyze_Photo, chatllm=chatllm))
 
     graph.add_edge(START, "Router")
     graph.add_edge("Router","Analyze")
