@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
         temperature=0.7,
         max_tokens=2048
     )
-    state.agent = create_flow_graph(state.llm)
+    state.agent = create_flow_graph()
 
     # Register Telegram webhook
     await tg_app.initialize()
