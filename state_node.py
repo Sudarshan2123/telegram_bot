@@ -1,7 +1,6 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, TypeDict
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph.message import add_messages
-from langgraph.utils import TypeDict
 
 
 class AppState:
