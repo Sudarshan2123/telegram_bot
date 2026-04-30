@@ -3,6 +3,7 @@ import traceback
 from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, Request
+import httpx
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
@@ -11,7 +12,7 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from flow_graph import create_flow_graph
 from state_node import AppState
-
+import psutil
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -22,18 +23,22 @@ tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    process = psutil.Process(os.getpid())
+    print(f"🔵 Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
     state.llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-pro",
         google_api_key=os.getenv("GEMINI_API_KEY"),
         temperature=0.7,
         max_tokens=2048
     )
+    print(f"🔵 After LLM init: {process.memory_info().rss / 1024 / 1024:.1f} MB")
     state.chatllm = ChatGroq(
-        model="llama-3.3-70b-versatile",   
+        model="llama-3.1-8b-instant",   
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.7,
         max_tokens=2048
     )
+    print(f"🔵 After ChatLLM: {process.memory_info().rss / 1024 / 1024:.1f} MB")
     state.agent = create_flow_graph(state.chatllm)
 
     await tg_app.initialize()
@@ -180,3 +185,13 @@ async def health_check():
         "bot": "vehicle insurance assistant",
         "agent": "ready" if state.agent else "not initialized"
     }
+
+
+@app.get("/debug/webhook")
+async def debug_webhook():
+    """Check webhook status from Render's server."""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo"
+        )
+        return response.json()
