@@ -6,9 +6,7 @@ async def Orchesterator(state: StateNode,chatllm):
     """Orchestrator for the Telegram Agentic Bot."""
     messages = state["messages"][-1]
     system_msg = SystemMessage(content="You are a helpful assistant that provides concise user intent information.from the following intent : General Chat,insurance supporty")
-    intent = await chatllm.ainvoke({
-        "messages": [system_msg, messages]
-    })
+    intent = await chatllm.ainvoke([system_msg, messages])
     return {"messages":[intent]}
 
 async def Analyze_Photo(state: StateNode):
