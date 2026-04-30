@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     )
     print(f"After ChatLLM: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
-    state.agent = create_flow_graph(state.llm, state.chatllm)
+    state.agent = create_flow_graph(state.chatllm)
     print(f"After agent: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     await tg_app.initialize()
