@@ -8,6 +8,6 @@ class AppState:
     agent = None
 
 class StateNode(TypedDict):
-    message:Annotated[list[Any],add_messages]
+    messages:Annotated[list[Any],add_messages]
     intent: Optional[str]
-    
+
