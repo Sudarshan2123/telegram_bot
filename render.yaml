@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: telegram-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 -k uvicorn.workers.UvicornWorker --threads 4 --timeout 600 app:app
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 10000

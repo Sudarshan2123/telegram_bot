@@ -161,7 +161,7 @@ async def handle_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply = "I can only process image files. Please send a vehicle photo!"
 
     except Exception as e:
-        print(f"❌ Error in handle_documents: {e}")
+        print(f"Error in handle_documents: {e}")
         traceback.print_exc()
         reply = "Sorry, I couldn't process the file. Please try again! 🙏"
 
@@ -193,7 +193,7 @@ async def telegram_webhook(token: str, request: Request):
 
 
 # ── HEALTH CHECK ──────────────────────────────────────────────
-@app.get("/")
+@app.head("/")
 async def health_check():
     return {
         "status": "running",
