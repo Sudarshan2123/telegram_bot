@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
         max_tokens=2048
     )
     state.chatllm = ChatGroq(
-        model="llama-3.2-90b-text-preview",
+        model="llama-3.3-70b-versatile",
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.7,
         max_tokens=2048
