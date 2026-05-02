@@ -118,7 +118,7 @@ def route(state):
     return action
 
 
-def create_flow_graph(chatllm, llm):  # ← no qdrant_client
+def create_flow_graph(chatllm, llm): 
     graph = StateGraph(StateNode)
 
     graph.add_node("supervisor",     partial(Supervisor,     chatllm=chatllm))

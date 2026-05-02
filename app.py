@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
-from qdrant_client import QdrantClient
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from flow_graph import create_flow_graph
