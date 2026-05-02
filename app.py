@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
         client=client,
         collection_name="insurance",
         embedding=embeddings,
+        vector_name="dense"
     )
     state.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     state.llm = ChatGroq(
