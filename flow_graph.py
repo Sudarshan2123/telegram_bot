@@ -1,6 +1,5 @@
 import os
-
-import httpx
+import asyncio
 from langgraph.graph import START, END, StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -11,7 +10,7 @@ from qdrant_client import QdrantClient
 
 async def chat(state: StateNode, chatllm):
     messages = state["messages"]
-    system_msg = SystemMessage(content="""You are a helpful vehicle insurance assistant. 
+    system_msg = SystemMessage(content="""You are a helpful vehicle insurance assistant.
     Answer questions about vehicle insurance clearly and helpfully.""")
     response = await chatllm.ainvoke([system_msg, *messages])
     return {"messages": [response]}
@@ -20,12 +19,12 @@ async def chat(state: StateNode, chatllm):
 async def Supervisor(state: StateNode, chatllm):
     messages = state["messages"]
 
-    # Detect image directly — no LLM needed
-    for msg in messages:
-        if isinstance(msg.content, list):
-            if any(p.get("type") == "image_url" for p in msg.content if isinstance(p, dict)):
-                print("Image detected → routing to analyse_photos")
-                return {"next_action": "analyse_photos"}
+    # ← only check last message, not full history
+    last_msg = messages[-1]
+    if isinstance(last_msg.content, list):
+        if any(p.get("type") == "image_url" for p in last_msg.content if isinstance(p, dict)):
+            print("Image detected → routing to analyse_photos")
+            return {"next_action": "analyse_photos"}
 
     system_prompt = SystemMessage(content="""You are a routing supervisor.
 Respond with ONLY one of these exact values for next_action:
@@ -53,57 +52,47 @@ Provide a structured analysis that will help recommend the right insurance plan.
     return {"messages": [response]}
 
 
-async def Rag(state: StateNode, chatllm, qdrant_client):
+async def Rag(state: StateNode, chatllm, qdrant_client: QdrantClient):
     messages = state["messages"]
 
-    # ── Strip ONLY image content from HumanMessages, keep AI analysis ──
+    # ── Strip images, keep AI analysis ──
     text_messages = []
     for msg in messages:
         if isinstance(msg.content, list):
-            # HumanMessage with image — extract text parts only
             text_parts = [p["text"] for p in msg.content if p.get("type") == "text"]
-            if text_parts:
-                text_messages.append(HumanMessage(content=" ".join(text_parts)))
-            # if only image with no text, replace with a placeholder
-            else:
-                text_messages.append(HumanMessage(content="[User sent a vehicle photo]"))
+            text_messages.append(HumanMessage(
+                content=" ".join(text_parts) if text_parts else "[User sent a vehicle photo]"
+            ))
         else:
             text_messages.append(msg)
 
-    # ── Build query from AI analysis (last AI message) ──
+    # ── Build query from last AI message (vehicle analysis) ──
     query = "vehicle insurance recommendation"
     for msg in reversed(text_messages):
         if hasattr(msg, 'content') and isinstance(msg.content, str) and msg.content.strip():
-            query = msg.content[:500]  
+            query = msg.content[:500]
             break
 
     print(f"RAG query: {query[:100]}")
 
-    # ── Fetch plans from Qdrant ──
-    async with httpx.AsyncClient() as http_client:
-        response = await http_client.post(
-            f"{os.getenv('QDRANT_URL')}/collections/insurance/points/scroll",
-            headers={
-                "api-key": os.getenv("QDRANT_API_KEY"),
-                "Content-Type": "application/json"
-            },
-            json={
-                "limit": 5,
-                "with_payload": True,
-                "with_vector": False
-            }
-        )
-        data = response.json()
+    # ── Fetch plans using qdrant_client (sync → async) ──
+    results = await asyncio.to_thread(
+        qdrant_client.scroll,
+        collection_name="insurance",
+        limit=5,
+        with_payload=True,
+        with_vectors=False
+    )
 
-    points = data.get("result", {}).get("points", [])
+    points = results[0]  # scroll returns (points, next_page_offset)
 
     if points:
         context = "\n\n".join([
-            f"Plan: {p['payload'].get('plan_name', 'Unknown')}\n"
-            f"Insurer: {p['payload'].get('insurer', 'Unknown')}\n"
-            f"Premium: {p['payload'].get('premium_range', 'Unknown')}\n"
-            f"Suitable For: {p['payload'].get('suitable_for', 'Unknown')}\n"
-            f"Details: {p['payload'].get('document', p['payload'].get('page_content', ''))}"
+            f"Plan: {p.payload.get('plan_name', 'Unknown')}\n"
+            f"Insurer: {p.payload.get('insurer', 'Unknown')}\n"
+            f"Premium: {p.payload.get('premium_range', 'Unknown')}\n"
+            f"Suitable For: {p.payload.get('suitable_for', 'Unknown')}\n"
+            f"Details: {p.payload.get('document', p.payload.get('page_content', ''))}"
             for p in points
         ])
     else:
@@ -119,8 +108,7 @@ Available Insurance Plans:
 """)
 
     response = await chatllm.ainvoke([system_msg, *text_messages])
-    print(f"RAG response type: {type(response.content)}")
-    print(f"RAG response content: {str(response.content)[:200]}")
+    print(f"RAG response: {str(response.content)[:200]}")
     return {"messages": [response]}
 
 
@@ -132,7 +120,7 @@ def route(state):
     return action
 
 
-def create_flow_graph(chatllm, llm, qdrant_client):  # ← qdrant_client instead of retriever
+def create_flow_graph(chatllm, llm, qdrant_client):
     graph = StateGraph(StateNode)
 
     graph.add_node("supervisor",     partial(Supervisor,     chatllm=chatllm))
@@ -155,7 +143,7 @@ def create_flow_graph(chatllm, llm, qdrant_client):  # ← qdrant_client instead
 
     graph.add_edge("chat", END)
     graph.add_edge("rag", END)
-    graph.add_edge("analyse_photos", "rag")  # ← photo analysis → then RAG for plan recommendation
+    graph.add_edge("analyse_photos", "rag")
 
     checkpointer = MemorySaver()
     return graph.compile(checkpointer=checkpointer)
