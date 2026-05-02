@@ -4,7 +4,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from state_node import RoutePlanner, StateNode
 from functools import partial
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 async def chat(state: StateNode, chatllm):
     messages = state["messages"]
@@ -63,41 +63,46 @@ async def Research(state: StateNode, chatllm):
         else:
             text_messages.append(msg)
 
-    # ── Build search query ──
-    query = "best vehicle insurance plans India"
+    # ── Build focused search query ──
+    vehicle_context = "vehicle"
     for msg in reversed(text_messages):
         if hasattr(msg, 'content') and isinstance(msg.content, str) and msg.content.strip():
-            query = msg.content[:300] + " vehicle insurance India best plan"
+            vehicle_context = msg.content[:200]
             break
 
+    query = f"best vehicle insurance plans India 2025 {vehicle_context[:100]}"
     print(f"Research query: {query[:100]}")
 
+    # ── DuckDuckGo search ──
     def search():
         with DDGS() as ddgs:
-            return list(ddgs.text(query, max_results=3))
+            return list(ddgs.text(query, max_results=5))
 
+    results = []
     try:
         results = await asyncio.to_thread(search)
-        context = "\n\n".join([
-            f"Title: {r['title']}\nSource: {r['href']}\nSummary: {r['body']}"
-            for r in results
-        ]) if results else ""
+        print(f"Search results found: {len(results)}")
     except Exception as e:
         print(f"Search error: {e}")
+
+    if results:
+        context = "\n\n".join([
+            f"Title: {r['title']}\nSummary: {r['body']}"
+            for r in results
+        ])
+    else:
         context = ""
 
-    print(f"Search results found: {len(results) if results else 0}")
-
     system_msg = SystemMessage(content=f"""You are a vehicle insurance expert in India.
-Based on the search results and conversation below, recommend the best insurance plans.
+Based on the vehicle analysis in the conversation, recommend the best insurance plans.
 
-{"Search Results:" + context if context else "No search results found. Use your knowledge to recommend plans."}
+{"Web Search Results:\n" + context if context else "Use your knowledge to recommend plans."}
 
 Provide:
 1. Top 3 recommended insurance plans with insurer names
 2. Premium ranges (in INR)
 3. Key benefits of each plan
-4. Why each plan suits this vehicle/situation
+4. Why each plan suits this vehicle
 5. Claim process overview
 
 Be specific, practical and helpful.""")
