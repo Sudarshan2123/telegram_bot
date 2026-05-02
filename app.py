@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     print(f"Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     state.llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash",
+        model="gemini-2.0-flash-lite",
         google_api_key=os.getenv("GEMINI_API_KEY"),
         temperature=0.4,
         max_tokens=1024

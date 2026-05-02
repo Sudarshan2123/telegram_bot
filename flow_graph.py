@@ -1,5 +1,5 @@
 from langgraph.graph import START, END, StateGraph
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from state_node import RoutePlanner, StateNode
 from functools import partial
 
@@ -14,10 +14,17 @@ async def Supervisor(state: StateNode,llm):
     system_prompt = SystemMessage(content="You are a helpful Supervisor of a team :Analyse photos,researcher,Rag,assistant"
                                   "Based on the user query, you will decide which team member to call and what information to provide them."
                                   "if the task is completed respond with FINISH.")
-
+    text_only_messages = []
+    for msg in state["messages"]:
+        if isinstance(msg.content, list):  # multimodal message (has image)
+            text_parts = [p["text"] for p in msg.content if p["type"] == "text"]
+            text = " ".join(text_parts) or "User sent an image, analyze it."
+            text_only_messages.append(HumanMessage(content=text))
+        else:
+            text_only_messages.append(msg)
     planner= llm.with_structured_output(RoutePlanner)
 
-    response = await planner.ainvoke([system_prompt] + state["messages"]) 
+    response = await planner.ainvoke([system_prompt] + text_only_messages) 
     return {"next_action": response.next_action}
 
 
@@ -31,7 +38,7 @@ async def Analyse_photos(state: StateNode, llm):
 def create_flow_graph(chatllm,llm):
     graph = StateGraph(StateNode)
     graph.add_node("chat", partial(chat, chatllm=chatllm))
-    graph.add_node("supervisor", partial(Supervisor, llm=llm))
+    graph.add_node("supervisor", partial(Supervisor, llm=chatllm))
     graph.add_node("analyse_photos", partial(Analyse_photos, llm=llm))
     graph.add_edge(START, "supervisor")
     graph.add_conditional_edges(
