@@ -107,11 +107,34 @@ Provide:
 
 Be specific, practical and helpful.""")
 
-    response = await chatllm.ainvoke([system_msg, *text_messages])
-    reply = response.content if isinstance(response.content, str) else str(response.content)
-    reply = reply.strip() or "Sorry, I couldn't find recommendations right now. Please try again."
+    # ── Debug ──
+    print(f"text_messages count: {len(text_messages)}")
+    for i, m in enumerate(text_messages):
+        print(f"  msg[{i}] type={type(m).__name__} content='{str(m.content)[:100]}'")
 
-    print(f"Research reply: {reply[:200]}")
+    response = await chatllm.ainvoke([system_msg, *text_messages])
+
+    print(f"Response type: {type(response.content)}")
+    print(f"Response content: '{str(response.content)[:300]}'")
+
+    reply = response.content if isinstance(response.content, str) else str(response.content)
+    reply = reply.strip()
+
+    # ── Fallback if LLM returns empty ──
+    if not reply:
+        print("LLM returned empty — using search results directly")
+        if results:
+            reply = "Based on my research, here are recommended vehicle insurance plans in India:\n\n"
+            for r in results[:3]:
+                reply += f"{r['title']}\n{r['body'][:250]}\n\n"
+        else:
+            reply = ("Based on my knowledge, here are top vehicle insurance providers in India:\n\n"
+                     "1. HDFC ERGO — Comprehensive coverage, INR 6,000–15,000/year\n"
+                     "2. Bajaj Allianz — Good claim settlement, INR 5,500–14,000/year\n"
+                     "3. ICICI Lombard — Wide garage network, INR 6,500–16,000/year\n\n"
+                     "Please visit their websites for exact quotes based on your vehicle.")
+
+    print(f"Final reply: {reply[:200]}")
     return {"messages": [AIMessage(content=reply)]}
 
 
