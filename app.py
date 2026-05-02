@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     )
     vectorstore = QdrantVectorStore(
         client=client,
-        collection_name="insurance_plans",
+        collection_name="insurance",
         embedding=embeddings,
     )
     state.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
