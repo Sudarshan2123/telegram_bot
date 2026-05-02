@@ -56,20 +56,32 @@ Provide a structured analysis that will help recommend the right insurance plan.
 async def Rag(state: StateNode, chatllm, qdrant_client):
     messages = state["messages"]
 
-    # build query text
-    last_message = messages[-1]
-    if isinstance(last_message.content, list):
-        text_parts = [p["text"] for p in last_message.content if p.get("type") == "text"]
-        query = " ".join(text_parts) or "vehicle insurance"
-    else:
-        query = last_message.content
+    # ── Strip ONLY image content from HumanMessages, keep AI analysis ──
+    text_messages = []
+    for msg in messages:
+        if isinstance(msg.content, list):
+            # HumanMessage with image — extract text parts only
+            text_parts = [p["text"] for p in msg.content if p.get("type") == "text"]
+            if text_parts:
+                text_messages.append(HumanMessage(content=" ".join(text_parts)))
+            # if only image with no text, replace with a placeholder
+            else:
+                text_messages.append(HumanMessage(content="[User sent a vehicle photo]"))
+        else:
+            text_messages.append(msg)  # ← AI analysis text kept as-is ✅
+
+    # ── Build query from AI analysis (last AI message) ──
+    query = "vehicle insurance recommendation"
+    for msg in reversed(text_messages):
+        if hasattr(msg, 'content') and isinstance(msg.content, str) and msg.content.strip():
+            query = msg.content[:500]  # use most recent message as query
+            break
 
     print(f"RAG query: {query[:100]}")
 
-    # ── Call Qdrant REST API with scroll (no embedding needed) ──
-    # Returns all docs, let LLM filter — simple but works
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
+    # ── Fetch plans from Qdrant ──
+    async with httpx.AsyncClient() as http_client:
+        response = await http_client.post(
             f"{os.getenv('QDRANT_URL')}/collections/insurance/points/scroll",
             headers={
                 "api-key": os.getenv("QDRANT_API_KEY"),
@@ -84,7 +96,7 @@ async def Rag(state: StateNode, chatllm, qdrant_client):
         data = response.json()
 
     points = data.get("result", {}).get("points", [])
-    
+
     if points:
         context = "\n\n".join([
             f"Plan: {p['payload'].get('plan_name', 'Unknown')}\n"
@@ -98,14 +110,18 @@ async def Rag(state: StateNode, chatllm, qdrant_client):
         context = "No insurance plans found."
 
     system_msg = SystemMessage(content=f"""You are a vehicle insurance expert.
-Based on the insurance plans below, recommend the best option for the user's specific needs.
-Be specific about why each plan suits them and mention premium ranges.
+A vehicle photo was analyzed and the analysis is included in the conversation below.
+Based on the vehicle analysis AND the insurance plans provided, recommend the most suitable plan.
+Explain specifically why the plan matches the vehicle's condition and type.
 
-Available Plans:
+Available Insurance Plans:
 {context}
 """)
 
-    response = await chatllm.ainvoke([system_msg, *messages])
+    # text_messages contains:
+    # [0] HumanMessage: "[User sent a vehicle photo]" + caption
+    # [1] AIMessage: full vehicle analysis from Analyse_photos  ← key info
+    response = await chatllm.ainvoke([system_msg, *text_messages])
     return {"messages": [response]}
 
 
