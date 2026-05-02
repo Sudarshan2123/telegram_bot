@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     print(f"Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     state.llm = ChatGroq(
-        model="llama-3.2-11b-vision-preview",  # vision + chat
+        model="meta-llama/llama-4-scout-17b-16e-instruct",  # vision + chat
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.7,
         max_tokens=1024
