@@ -4,9 +4,12 @@ from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, Request
 import httpx
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from flow_graph import create_flow_graph
@@ -26,7 +29,20 @@ async def lifespan(app: FastAPI):
     process = psutil.Process(os.getpid())
 
     print(f"Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
-
+    client = QdrantClient(
+    url=os.getenv("QDRANT_URL"),       # from Qdrant Cloud dashboard
+    api_key=os.getenv("QDRANT_API_KEY")
+    )
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/text-embedding-004",
+        google_api_key=os.getenv("GEMINI_API_KEY")
+    )
+    vectorstore = QdrantVectorStore(
+        client=client,
+        collection_name="insurance_plans",
+        embedding=embeddings,
+    )
+    state.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     state.llm = ChatGroq(
         model="meta-llama/llama-4-scout-17b-16e-instruct",  # vision + chat
         api_key=os.getenv("GROQ_API_KEY"),
@@ -43,7 +59,7 @@ async def lifespan(app: FastAPI):
     )
     print(f"After ChatLLM: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
-    state.agent = create_flow_graph(state.chatllm, state.llm)
+    state.agent = create_flow_graph(state.chatllm, state.llm, state.retriever)
     print(f"After agent: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     await tg_app.initialize()
@@ -203,13 +219,3 @@ async def health_check():
         "bot": "vehicle insurance assistant",
         "agent": "ready" if state.agent else "not initialized"
     }
-
-
-# @app.get("/debug/webhook")
-# async def debug_webhook():
-#     """Check webhook status from Render's server."""
-#     async with httpx.AsyncClient() as client:
-#         response = await client.get(
-#             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo"
-#         )
-#         return response.json()

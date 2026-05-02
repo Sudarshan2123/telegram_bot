@@ -7,10 +7,16 @@ from typing import Literal
 class AppState:
     llm : ChatGoogleGenerativeAI = None
     agent = None
+    retriever = None
 
 class StateNode(TypedDict):
     messages:Annotated[list[Any],add_messages]
     next_action: Optional[str]
+    driver_age: Optional[int] = None
+    vehicle_type: Optional[str] = None
+    damage_type: Optional[str] = None
+    budget: Optional[str] = None
+    retrieved_docs: Optional[list] = None
 
 class RoutePlanner(BaseModel):
-    next_action: Literal["Analyse photos","chat","FINISH"]
+    next_action: Literal["chat","rag","FINISH"]
