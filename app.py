@@ -24,16 +24,49 @@ tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 import logging
 logger = logging.getLogger(__name__)
 
+import base64
+import traceback
+from contextlib import asynccontextmanager
+import os
+from fastapi import FastAPI, Request
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage
+from dotenv import load_dotenv
+from langchain_qdrant import QdrantVectorStore
+from qdrant_client import QdrantClient
+from langchain_community.embeddings import JinaEmbeddings  # ← API-based, no memory
+from telegram import Update
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from flow_graph import create_flow_graph
+from state_node import AppState
+import psutil
+import logging
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+state = AppState()
+tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     process = psutil.Process(os.getpid())
-
     print(f"Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+
+    # ── Qdrant + Jina embeddings (API-based, zero local memory) ──
     client = QdrantClient(
-    url=os.getenv("QDRANT_URL"),       # from Qdrant Cloud dashboard
-    api_key=os.getenv("QDRANT_API_KEY")
+        url=os.getenv("QDRANT_URL"),
+        api_key=os.getenv("QDRANT_API_KEY")
     )
-    embeddings = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
+
+    embeddings = JinaEmbeddings(
+        jina_api_key=os.getenv("JINA_API_KEY"),
+        model_name="jina-embeddings-v2-base-en"  # 768 dims
+    )
+
     vectorstore = QdrantVectorStore(
         client=client,
         collection_name="insurance",
@@ -41,8 +74,11 @@ async def lifespan(app: FastAPI):
         vector_name="dense"
     )
     state.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    print(f"After retriever: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+
+    # ── LLMs ──────────────────────────────────────────────────────
     state.llm = ChatGroq(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",  # vision + chat
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.7,
         max_tokens=1024
@@ -63,11 +99,7 @@ async def lifespan(app: FastAPI):
     await tg_app.initialize()
 
     webhook_url = f"{os.getenv('RENDER_URL')}/telegram/{TELEGRAM_BOT_TOKEN}"
-
-    await tg_app.bot.set_webhook(
-        url=webhook_url,
-        drop_pending_updates=True
-    )
+    await tg_app.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
 
     info = await tg_app.bot.get_webhook_info()
     if info.url == webhook_url:
