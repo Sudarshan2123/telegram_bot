@@ -3,38 +3,10 @@ import traceback
 from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, Request
-import httpx
-from fastembed import TextEmbedding
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
-from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
-from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
-from flow_graph import create_flow_graph
-from state_node import AppState
-import psutil
-load_dotenv()
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-state = AppState()
-tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-import logging
-logger = logging.getLogger(__name__)
-
-import base64
-import traceback
-from contextlib import asynccontextmanager
-import os
-from fastapi import FastAPI, Request
-from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage
-from dotenv import load_dotenv
-from langchain_qdrant import QdrantVectorStore
-from qdrant_client import QdrantClient
-from langchain_community.embeddings import JinaEmbeddings  # ← API-based, no memory
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from flow_graph import create_flow_graph
@@ -56,25 +28,14 @@ async def lifespan(app: FastAPI):
     process = psutil.Process(os.getpid())
     print(f"Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
-    # ── Qdrant + Jina embeddings (API-based, zero local memory) ──
-    client = QdrantClient(
+    # ── Qdrant client — server-side embeddings, zero local memory ──
+    qdrant_client = QdrantClient(
         url=os.getenv("QDRANT_URL"),
         api_key=os.getenv("QDRANT_API_KEY")
     )
-
-    embeddings = JinaEmbeddings(
-        jina_api_key=os.getenv("JINA_API_KEY"),
-        model_name="jina-embeddings-v2-base-en"  # 768 dims
-    )
-
-    vectorstore = QdrantVectorStore(
-        client=client,
-        collection_name="insurance",
-        embedding=embeddings,
-        vector_name="dense"
-    )
-    state.retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    print(f"After retriever: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+    qdrant_client.set_model("sentence-transformers/all-MiniLM-L6-v2")  # runs on Qdrant server
+    state.qdrant_client = qdrant_client
+    print(f"After Qdrant init: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     # ── LLMs ──────────────────────────────────────────────────────
     state.llm = ChatGroq(
@@ -93,7 +54,7 @@ async def lifespan(app: FastAPI):
     )
     print(f"After ChatLLM: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
-    state.agent = create_flow_graph(state.chatllm, state.llm, state.retriever)
+    state.agent = create_flow_graph(state.chatllm, state.llm, state.qdrant_client)
     print(f"After agent: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     await tg_app.initialize()
@@ -120,15 +81,16 @@ app = FastAPI(lifespan=lifespan)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     user_msg = update.message.text
-
     print(f"Text from {chat_id}: {user_msg}")
 
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        config = {"configurable": {"thread_id": str(chat_id)}}
 
-        response = await state.agent.ainvoke({
-            "messages": [HumanMessage(content=user_msg)]
-        })
+        response = await state.agent.ainvoke(
+            {"messages": [HumanMessage(content=user_msg)]},
+            config=config
+        )
         reply = response["messages"][-1].content
         print(f"Reply: {reply[:100]}")
 
@@ -147,25 +109,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        config = {"configurable": {"thread_id": str(chat_id)}}
 
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         image_bytes = await file.download_as_bytearray()
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
         caption = update.message.caption or "Analyze this vehicle and suggest insurance."
-        logger.info(f"Processing document as image: {file} with MIME type {image_base64[:30]}...")
-        logger.info(f"Caption: {caption}")
-        response = await state.agent.ainvoke({
-            "messages": [HumanMessage(content=[
+
+        response = await state.agent.ainvoke(
+            {"messages": [HumanMessage(content=[
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_base64}"
-                    }
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
                 },
                 {"type": "text", "text": caption}
-            ])]
-        })
+            ])]},
+            config=config
+        )
         reply = response["messages"][-1].content
         print(f"Photo reply generated")
 
@@ -181,29 +142,28 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     doc = update.message.document
-    print(f"📎 Document from {chat_id}: {doc.mime_type}")
+    print(f"Document from {chat_id}: {doc.mime_type}")
 
     try:
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        config = {"configurable": {"thread_id": str(chat_id)}}
 
         if doc.mime_type and doc.mime_type.startswith("image/"):
             file = await context.bot.get_file(doc.file_id)
             image_bytes = await file.download_as_bytearray()
             image_base64 = base64.b64encode(image_bytes).decode("utf-8")
             caption = update.message.caption or "Analyze this vehicle and suggest insurance."
-            logger.info(f"Processing document as image: {doc.file_name} with MIME type {doc.mime_type}")
-            logger.info(f"Caption: {caption}")
-            response = await state.agent.ainvoke({
-                "messages": [HumanMessage(content=[
+
+            response = await state.agent.ainvoke(
+                {"messages": [HumanMessage(content=[
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{doc.mime_type};base64,{image_base64}"
-                        }
+                        "image_url": {"url": f"data:{doc.mime_type};base64,{image_base64}"}
                     },
                     {"type": "text", "text": caption}
-                ])]
-            })
+                ])]},
+                config=config
+            )
             reply = response["messages"][-1].content
         else:
             reply = "I can only process image files. Please send a vehicle photo!"
@@ -242,7 +202,7 @@ async def telegram_webhook(token: str, request: Request):
 
 # ── HEALTH CHECK ──────────────────────────────────────────────
 @app.head("/")
-@app.get("/") 
+@app.get("/")
 async def health_check():
     return {
         "status": "running",
