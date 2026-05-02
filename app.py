@@ -32,8 +32,7 @@ async def lifespan(app: FastAPI):
     qdrant_client = QdrantClient(
         url=os.getenv("QDRANT_URL"),
         api_key=os.getenv("QDRANT_API_KEY")
-    )
-    qdrant_client.set_model("sentence-transformers/all-MiniLM-L6-v2")  # runs on Qdrant server
+    )  # runs on Qdrant server
     state.qdrant_client = qdrant_client
     print(f"After Qdrant init: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 

@@ -1,3 +1,6 @@
+import os
+
+import httpx
 from langgraph.graph import START, END, StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -50,50 +53,55 @@ Provide a structured analysis that will help recommend the right insurance plan.
     return {"messages": [response]}
 
 
-async def Rag(state: StateNode, chatllm, qdrant_client: QdrantClient):
+async def Rag(state: StateNode, chatllm, qdrant_client):
     messages = state["messages"]
 
-    # Build query from last few messages
+    # build query text
     last_message = messages[-1]
     if isinstance(last_message.content, list):
-        # extract text from multimodal message
         text_parts = [p["text"] for p in last_message.content if p.get("type") == "text"]
-        query = " ".join(text_parts) or "vehicle insurance recommendation"
+        query = " ".join(text_parts) or "vehicle insurance"
     else:
         query = last_message.content
 
-    # also include second to last if it's an AI analysis of a photo
-    if len(messages) >= 2:
-        prev = messages[-2]
-        if hasattr(prev, 'content') and isinstance(prev.content, str):
-            query = f"{prev.content} {query}"
-
     print(f"RAG query: {query[:100]}")
 
-    # Qdrant server-side embedding + search
-    results = qdrant_client.query(
-        collection_name="insurance",
-        query_text=query,   # ← Qdrant embeds this server-side
-        limit=3
-    )
+    # ── Call Qdrant REST API with scroll (no embedding needed) ──
+    # Returns all docs, let LLM filter — simple but works
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{os.getenv('QDRANT_URL')}/collections/insurance/points/scroll",
+            headers={
+                "api-key": os.getenv("QDRANT_API_KEY"),
+                "Content-Type": "application/json"
+            },
+            json={
+                "limit": 5,
+                "with_payload": True,
+                "with_vector": False
+            }
+        )
+        data = response.json()
 
-    if results:
+    points = data.get("result", {}).get("points", [])
+    
+    if points:
         context = "\n\n".join([
-            f"Plan: {r.metadata.get('plan_name', 'Unknown')}\n"
-            f"Insurer: {r.metadata.get('insurer', 'Unknown')}\n"
-            f"Premium: {r.metadata.get('premium_range', 'Unknown')}\n"
-            f"Suitable For: {r.metadata.get('suitable_for', 'Unknown')}\n"
-            f"Details: {r.document}"
-            for r in results
+            f"Plan: {p['payload'].get('plan_name', 'Unknown')}\n"
+            f"Insurer: {p['payload'].get('insurer', 'Unknown')}\n"
+            f"Premium: {p['payload'].get('premium_range', 'Unknown')}\n"
+            f"Suitable For: {p['payload'].get('suitable_for', 'Unknown')}\n"
+            f"Details: {p['payload'].get('document', p['payload'].get('page_content', ''))}"
+            for p in points
         ])
     else:
-        context = "No specific insurance plans found."
+        context = "No insurance plans found."
 
     system_msg = SystemMessage(content=f"""You are a vehicle insurance expert.
-Based on the retrieved insurance plans below, recommend the best option for the user.
-Be specific about why each plan suits their needs and mention the premium range.
+Based on the insurance plans below, recommend the best option for the user's specific needs.
+Be specific about why each plan suits them and mention premium ranges.
 
-Retrieved Plans:
+Available Plans:
 {context}
 """)
 
