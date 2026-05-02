@@ -197,6 +197,7 @@ async def telegram_webhook(token: str, request: Request):
 
 # ── HEALTH CHECK ──────────────────────────────────────────────
 @app.head("/")
+@app.get("/") 
 async def health_check():
     return {
         "status": "running",
