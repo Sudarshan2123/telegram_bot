@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, Request
 import httpx
+from logging import logger
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
@@ -125,7 +126,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in handle_photo: {e}")
         traceback.print_exc()
-        reply = "Sorry, I couldn't analyze the image. Please try again! 🙏"
+        reply = "Sorry, I couldn't analyze the image. Please try again!"
 
     await update.message.reply_text(reply)
 
@@ -144,7 +145,8 @@ async def handle_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
             image_bytes = await file.download_as_bytearray()
             image_base64 = base64.b64encode(image_bytes).decode("utf-8")
             caption = update.message.caption or "Analyze this vehicle and suggest insurance."
-
+            logger.info(f"Processing document as image: {doc.file_name} with MIME type {doc.mime_type}")
+            logger.info(f"Caption: {caption}")
             response = await state.agent.ainvoke({
                 "messages": [HumanMessage(content=[
                     {
@@ -163,7 +165,7 @@ async def handle_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in handle_documents: {e}")
         traceback.print_exc()
-        reply = "Sorry, I couldn't process the file. Please try again! 🙏"
+        reply = "Sorry, I couldn't process the file. Please try again!"
 
     await update.message.reply_text(reply)
 
@@ -202,11 +204,11 @@ async def health_check():
     }
 
 
-@app.get("/debug/webhook")
-async def debug_webhook():
-    """Check webhook status from Render's server."""
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo"
-        )
-        return response.json()
+# @app.get("/debug/webhook")
+# async def debug_webhook():
+#     """Check webhook status from Render's server."""
+#     async with httpx.AsyncClient() as client:
+#         response = await client.get(
+#             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo"
+#         )
+#         return response.json()
