@@ -13,4 +13,4 @@ class StateNode(TypedDict):
     next_action: Optional[str]
 
 class RoutePlanner(BaseModel):
-    next_action: Literal["Analyse photos","chat","Rag","assistant","FINISH"]
+    next_action: Literal["Analyse photos","chat","FINISH"]

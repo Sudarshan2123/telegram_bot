@@ -11,9 +11,13 @@ async def chat(state: StateNode, chatllm):
 
 
 async def Supervisor(state: StateNode,llm):
-    system_prompt = SystemMessage(content="You are a helpful Supervisor of a team :Analyse photos,researcher,Rag,assistant"
-                                  "Based on the user query, you will decide which team member to call and what information to provide them."
-                                  "if the task is completed respond with FINISH.")
+    system_prompt = SystemMessage(content="""You are a routing supervisor.
+        You MUST respond with ONLY one of these exact values for next_action:
+        - "chat" → for any text message, greeting, or insurance question
+        - "analyse_photos" → ONLY when the message contains an image or mentions analyzing a photo
+        - "FINISH" → when the task is fully complete
+
+        Do NOT use any other values. Do NOT use "assistant", "Rag", or anything else.""")
     text_only_messages = []
     for msg in state["messages"]:
         if isinstance(msg.content, list):  # multimodal message (has image)
