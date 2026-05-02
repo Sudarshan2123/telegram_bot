@@ -50,7 +50,7 @@ def create_flow_graph(chatllm,llm):
         lambda state: state["next_action"],
         {
           "chat": "chat",
-          "Analyse photos": "analyse_photos", 
+          "analyse_photos": "analyse_photos", 
           "FINISH": END
         }
     )
