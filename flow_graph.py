@@ -68,13 +68,13 @@ async def Rag(state: StateNode, chatllm, qdrant_client):
             else:
                 text_messages.append(HumanMessage(content="[User sent a vehicle photo]"))
         else:
-            text_messages.append(msg)  # ← AI analysis text kept as-is ✅
+            text_messages.append(msg)
 
     # ── Build query from AI analysis (last AI message) ──
     query = "vehicle insurance recommendation"
     for msg in reversed(text_messages):
         if hasattr(msg, 'content') and isinstance(msg.content, str) and msg.content.strip():
-            query = msg.content[:500]  # use most recent message as query
+            query = msg.content[:500]  
             break
 
     print(f"RAG query: {query[:100]}")
@@ -118,10 +118,9 @@ Available Insurance Plans:
 {context}
 """)
 
-    # text_messages contains:
-    # [0] HumanMessage: "[User sent a vehicle photo]" + caption
-    # [1] AIMessage: full vehicle analysis from Analyse_photos  ← key info
     response = await chatllm.ainvoke([system_msg, *text_messages])
+    print(f"RAG response type: {type(response.content)}")
+    print(f"RAG response content: {str(response.content)[:200]}")
     return {"messages": [response]}
 
 
