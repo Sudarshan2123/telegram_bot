@@ -188,35 +188,68 @@ Be structured and concise. Your analysis will be used to recommend the right ins
             content="I can see a vehicle in the image. Could you share the make, model, and year so I can recommend the best insurance plan?"
         )
 
-    # Update vehicle_context with the AI's analysis for the Research node
+    # Store the FULL analysis — research_node needs all details to give
+    # personalised recommendations. Do NOT truncate here; only the search
+    # query (built in research_node) is trimmed to 80 chars.
     analysis_text = response.content if isinstance(response.content, str) else str(response.content)
+    logger.info("Photo analysis (%d chars): %s...", len(analysis_text), analysis_text[:120])
     return {
         "messages": [response],
-        "vehicle_context": analysis_text[:300],  # keep it short for the search query
+        "vehicle_context": analysis_text,   # full text passed to research_node
     }
 
 
 async def research_node(state: StateNode, chatllm, llm):
     """
-    Search for current insurance plans and synthesise a recommendation.
+    Search for current insurance plans and synthesise a recommendation
+    that is FULLY PERSONALISED to the vehicle analysis from analyse_photos.
 
-    Context priority (highest → lowest):
-      1. state["vehicle_context"]  — set by analyse_photos or supervisor
+    vehicle_context priority (highest → lowest):
+      1. state["vehicle_context"]  — set by analyse_photos (full analysis text)
       2. Last human message text
       3. Generic fallback
     """
-    messages      = state["messages"]
-    clean_msgs    = _strip_images(messages)
-    recent_msgs   = clean_msgs[-4:]
+    messages    = state["messages"]
+    clean_msgs  = _strip_images(messages)
 
-    # ── Build search query ───────────────────────────────────────────
+    # ── Pull vehicle_context (photo analysis or user text) ───────────
     vehicle_context = (
-        state.get("vehicle_context")
+        state.get("vehicle_context", "").strip()
         or _last_human_text(clean_msgs)
         or "vehicle insurance India"
     )
-    # Trim to avoid DuckDuckGo query-length issues
-    query = f"best vehicle insurance India 2025 {vehicle_context[:80]}"
+    logger.info("vehicle_context for research (%d chars): %s...",
+                len(vehicle_context), vehicle_context[:120])
+
+    # ── Detect vehicle type from context for smarter query + fallback ─
+    ctx_lower = vehicle_context.lower()
+    if any(w in ctx_lower for w in ["two-wheeler", "two wheeler", "bike", "motorcycle",
+                                     "scooter", "motorbike"]):
+        vehicle_type = "two-wheeler"
+    elif any(w in ctx_lower for w in ["suv", "fortuner", "creta", "xuv", "innova",
+                                       "safari", "harrier"]):
+        vehicle_type = "SUV"
+    elif any(w in ctx_lower for w in ["truck", "commercial", "lorry", "tempo"]):
+        vehicle_type = "commercial vehicle"
+    elif any(w in ctx_lower for w in ["sedan", "city", "verna", "dzire", "ciaz"]):
+        vehicle_type = "sedan"
+    elif any(w in ctx_lower for w in ["hatchback", "swift", "wagnor", "alto",
+                                       "i20", "baleno", "polo"]):
+        vehicle_type = "hatchback"
+    else:
+        vehicle_type = "car"
+
+    # Detect damage for add-on recommendations
+    has_damage = any(w in ctx_lower for w in ["damage", "dent", "scratch",
+                                               "crack", "rust", "worn"])
+    is_old     = any(w in ctx_lower for w in ["old", "aged", "high mileage",
+                                               "wear", "10 year", "15 year"])
+
+    logger.info("Detected vehicle_type=%s  has_damage=%s  is_old=%s",
+                vehicle_type, has_damage, is_old)
+
+    # ── Build targeted search query ──────────────────────────────────
+    query = f"best {vehicle_type} insurance India 2025 {vehicle_context[:60]}"
     logger.info("Research query: %s", query[:120])
 
     # ── DuckDuckGo search (non-blocking) ────────────────────────────
@@ -236,22 +269,39 @@ async def research_node(state: StateNode, chatllm, llm):
     except Exception as exc:
         logger.warning("DuckDuckGo search error: %s", exc)
 
-    # ── LLM synthesis ────────────────────────────────────────────────
+    # ── Build add-on advice based on detected condition ───────────────
+    addon_advice = ""
+    if has_damage:
+        addon_advice += "\n- The vehicle has visible damage — recommend Return to Invoice or Repair cover add-ons."
+    if is_old:
+        addon_advice += "\n- Vehicle appears older — recommend Engine Protection and Consumables add-ons."
+    if vehicle_type == "two-wheeler":
+        addon_advice += "\n- Two-wheelers need Personal Accident cover for rider + pillion."
+
+    # ── LLM synthesis — full vehicle analysis passed in ──────────────
     system_msg = SystemMessage(content=f"""You are a vehicle insurance expert in India.
-Based on the conversation and search results, recommend the TOP 3 insurance plans.
+The user uploaded a photo of their vehicle. Here is the FULL analysis of that vehicle:
 
-{"### Live Search Results\n" + search_context if search_context else "### Note: Search unavailable — use your knowledge."}
+### Vehicle Analysis (from photo)
+{vehicle_context}
 
-### Vehicle Context
-{vehicle_context[:300]}
+{"### Live Search Results\n" + search_context if search_context else "### Note: Search unavailable — use your expert knowledge."}
+
+### Your Task
+Recommend the TOP 3 insurance plans specifically suited for THIS vehicle.
+{addon_advice}
 
 For each plan provide:
   - Insurer name
-  - Estimated annual premium range (INR)
-  - 3 key benefits
-  - Ideal for (vehicle type / profile)
+  - Estimated annual premium range (INR) for this specific vehicle type
+  - 3 key benefits relevant to this vehicle
+  - Why it suits THIS vehicle specifically (reference the analysis above)
 
+Do NOT give generic recommendations. Tailor everything to the vehicle analysis.
 Be specific, practical, and India-focused.""")
+
+    # Include the full clean message history so the LLM has conversation context
+    recent_msgs = clean_msgs[-4:]
 
     try:
         response = await llm.ainvoke([system_msg, *recent_msgs])
@@ -260,26 +310,69 @@ Be specific, practical, and India-focused.""")
         logger.error("research_node LLM error: %s", exc)
         reply = ""
 
-    # ── Explicit fallback (never empty) ─────────────────────────────
+    # ── Smart fallback — vehicle-type aware, never generic ───────────
     if not reply:
-        reply = (
-            "Here are top vehicle insurance plans in India (2025):\n\n"
-            "1. **HDFC ERGO** — ₹6,000–₹15,000/year\n"
-            "   • Cashless repairs at 6,800+ garages\n"
-            "   • Zero depreciation add-on available\n"
-            "   • Quick digital claims\n"
-            "   Ideal for: New cars & first-time buyers\n\n"
-            "2. **Bajaj Allianz** — ₹5,500–₹14,000/year\n"
-            "   • 24×7 roadside assistance\n"
-            "   • High claim settlement ratio (98%+)\n"
-            "   • Engine protect add-on\n"
-            "   Ideal for: Budget-conscious owners\n\n"
-            "3. **ICICI Lombard** — ₹6,500–₹16,000/year\n"
-            "   • 15,000+ network garages\n"
-            "   • Instant policy issuance\n"
-            "   • No-claim bonus up to 50%\n"
-            "   Ideal for: Premium & older vehicles"
-        )
+        if vehicle_type == "two-wheeler":
+            reply = (
+                f"Based on your {vehicle_type}, here are the best insurance plans in India (2025):\n\n"
+                "1. **Bajaj Allianz Two-Wheeler** — ₹1,500–₹4,000/year\n"
+                "   • Personal Accident cover ₹15 lakh\n"
+                "   • Pillion rider cover available\n"
+                "   • Cashless repairs at 4,000+ garages\n"
+                "   Best for: Bikes & scooters up to 150cc\n\n"
+                "2. **HDFC ERGO Two-Wheeler** — ₹1,800–₹5,000/year\n"
+                "   • Zero depreciation add-on\n"
+                "   • 24×7 roadside assistance\n"
+                "   • Quick digital claim settlement\n"
+                "   Best for: Premium bikes & high-value scooters\n\n"
+                "3. **New India Assurance** — ₹1,200–₹3,500/year\n"
+                "   • Government-backed reliability\n"
+                "   • Wide network across India\n"
+                "   • Affordable OD + TP combo\n"
+                "   Best for: Budget two-wheelers"
+            )
+        elif vehicle_type == "SUV":
+            reply = (
+                f"Based on your {vehicle_type}, here are the best insurance plans in India (2025):\n\n"
+                "1. **HDFC ERGO Comprehensive** — ₹12,000–₹28,000/year\n"
+                "   • Zero depreciation for higher IDV protection\n"
+                "   • Engine protect — critical for SUV off-road use\n"
+                "   • 6,800+ cashless garages\n"
+                "   Best for: New & mid-aged SUVs\n\n"
+                "2. **ICICI Lombard SUV Plan** — ₹13,000–₹30,000/year\n"
+                "   • Consumables cover (oils, filters)\n"
+                "   • 24×7 roadside & towing assistance\n"
+                "   • Spot claim settlement\n"
+                "   Best for: Premium SUVs (Fortuner, Harrier, XUV)\n\n"
+                "3. **Tata AIG** — ₹11,000–₹26,000/year\n"
+                "   • Return to Invoice cover\n"
+                "   • Key replacement add-on\n"
+                "   • High NCB retention\n"
+                "   Best for: Older SUVs with high mileage"
+            )
+        else:
+            reply = (
+                f"Based on your {vehicle_type}, here are the best insurance plans in India (2025):\n\n"
+                "1. **HDFC ERGO** — ₹6,000–₹15,000/year\n"
+                "   • Cashless repairs at 6,800+ garages\n"
+                "   • Zero depreciation add-on available\n"
+                "   • Quick digital claims\n"
+                "   Best for: New & well-maintained cars\n\n"
+                "2. **Bajaj Allianz** — ₹5,500–₹14,000/year\n"
+                "   • 24×7 roadside assistance\n"
+                "   • High claim settlement ratio (98%+)\n"
+                "   • Engine protect add-on\n"
+                "   Best for: Budget-conscious owners\n\n"
+                "3. **ICICI Lombard** — ₹6,500–₹16,000/year\n"
+                "   • 15,000+ network garages\n"
+                "   • Instant policy issuance\n"
+                "   • No-claim bonus up to 50%\n"
+                "   Best for: Premium & older vehicles"
+            )
+        if has_damage:
+            reply += "\n\n**Note:** Visible damage detected — consider adding a **Return to Invoice** or **Repair of Glass/Fibre** add-on to any plan above."
+        if is_old:
+            reply += "\n\n🔧 **Note:** Older vehicle detected — an **Engine Protection** add-on is strongly recommended."
 
     logger.info("Research reply (first 150 chars): %s", reply[:150])
     return {"messages": [AIMessage(content=reply)]}
