@@ -1,17 +1,15 @@
-import os
 import asyncio
 from langgraph.graph import START, END, StateGraph
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from state_node import RoutePlanner, StateNode
 from functools import partial
-from qdrant_client import QdrantClient
-
+from duckduckgo_search import DDGS
 
 async def chat(state: StateNode, chatllm):
     messages = state["messages"]
     system_msg = SystemMessage(content="""You are a helpful vehicle insurance assistant.
-    Answer questions about vehicle insurance clearly and helpfully.""")
+Answer questions about vehicle insurance clearly and helpfully.""")
     response = await chatllm.ainvoke([system_msg, *messages])
     return {"messages": [response]}
 
@@ -19,7 +17,6 @@ async def chat(state: StateNode, chatllm):
 async def Supervisor(state: StateNode, chatllm):
     messages = state["messages"]
 
-    # ← only check last message, not full history
     last_msg = messages[-1]
     if isinstance(last_msg.content, list):
         if any(p.get("type") == "image_url" for p in last_msg.content if isinstance(p, dict)):
@@ -28,7 +25,7 @@ async def Supervisor(state: StateNode, chatllm):
 
     system_prompt = SystemMessage(content="""You are a routing supervisor.
 Respond with ONLY one of these exact values for next_action:
-- "rag" → for insurance questions, plan queries, coverage questions, recommendations
+- "research" → for insurance questions, plan queries, coverage questions, recommendations
 - "chat" → for greetings, general conversation, non-insurance questions
 - "FINISH" → when task is complete
 Do NOT use any other values.""")
@@ -52,7 +49,7 @@ Provide a structured analysis that will help recommend the right insurance plan.
     return {"messages": [response]}
 
 
-async def Rag(state: StateNode, chatllm, qdrant_client: QdrantClient):
+async def Research(state: StateNode, chatllm):
     messages = state["messages"]
 
     # ── Strip images, keep AI analysis ──
@@ -66,67 +63,68 @@ async def Rag(state: StateNode, chatllm, qdrant_client: QdrantClient):
         else:
             text_messages.append(msg)
 
-    # ── Build query from last AI message (vehicle analysis) ──
-    query = "vehicle insurance recommendation"
+    # ── Build search query ──
+    query = "best vehicle insurance plans India"
     for msg in reversed(text_messages):
         if hasattr(msg, 'content') and isinstance(msg.content, str) and msg.content.strip():
-            query = msg.content[:500]
+            query = msg.content[:300] + " vehicle insurance India best plan"
             break
 
-    print(f"RAG query: {query[:100]}")
+    print(f"Research query: {query[:100]}")
 
-    # ── Fetch plans using qdrant_client (sync → async) ──
-    results = await asyncio.to_thread(
-        qdrant_client.scroll,
-        collection_name="insurance",
-        limit=5,
-        with_payload=True,
-        with_vectors=False
-    )
+    def search():
+        with DDGS() as ddgs:
+            return list(ddgs.text(query, max_results=3))
 
-    points = results[0]  # scroll returns (points, next_page_offset)
-
-    if points:
+    try:
+        results = await asyncio.to_thread(search)
         context = "\n\n".join([
-            f"Plan: {p.payload.get('plan_name', 'Unknown')}\n"
-            f"Insurer: {p.payload.get('insurer', 'Unknown')}\n"
-            f"Premium: {p.payload.get('premium_range', 'Unknown')}\n"
-            f"Suitable For: {p.payload.get('suitable_for', 'Unknown')}\n"
-            f"Details: {p.payload.get('document', p.payload.get('page_content', ''))}"
-            for p in points
-        ])
-    else:
-        context = "No insurance plans found."
+            f"Title: {r['title']}\nSource: {r['href']}\nSummary: {r['body']}"
+            for r in results
+        ]) if results else ""
+    except Exception as e:
+        print(f"Search error: {e}")
+        context = ""
 
-    system_msg = SystemMessage(content=f"""You are a vehicle insurance expert.
-A vehicle photo was analyzed and the analysis is included in the conversation below.
-Based on the vehicle analysis AND the insurance plans provided, recommend the most suitable plan.
-Explain specifically why the plan matches the vehicle's condition and type.
+    print(f"Search results found: {len(results) if results else 0}")
 
-Available Insurance Plans:
-{context}
-""")
+    system_msg = SystemMessage(content=f"""You are a vehicle insurance expert in India.
+Based on the search results and conversation below, recommend the best insurance plans.
+
+{"Search Results:" + context if context else "No search results found. Use your knowledge to recommend plans."}
+
+Provide:
+1. Top 3 recommended insurance plans with insurer names
+2. Premium ranges (in INR)
+3. Key benefits of each plan
+4. Why each plan suits this vehicle/situation
+5. Claim process overview
+
+Be specific, practical and helpful.""")
 
     response = await chatllm.ainvoke([system_msg, *text_messages])
-    print(f"RAG response: {str(response.content)[:200]}")
-    return {"messages": [response]}
+    reply = response.content if isinstance(response.content, str) else str(response.content)
+    reply = reply.strip() or "Sorry, I couldn't find recommendations right now. Please try again."
+
+    print(f"Research reply: {reply[:200]}")
+    return {"messages": [AIMessage(content=reply)]}
 
 
 def route(state):
     action = state.get("next_action", "chat")
-    if action not in ["chat", "rag", "analyse_photos", "FINISH"]:
+    if action not in ["chat", "research", "analyse_photos", "FINISH"]:
         print(f"Unknown route '{action}', defaulting to chat")
         return "chat"
     return action
 
 
-def create_flow_graph(chatllm, llm, qdrant_client):
+def create_flow_graph(chatllm, llm):  # ← no qdrant_client
     graph = StateGraph(StateNode)
 
     graph.add_node("supervisor",     partial(Supervisor,     chatllm=chatllm))
     graph.add_node("chat",           partial(chat,           chatllm=chatllm))
     graph.add_node("analyse_photos", partial(Analyse_photos, llm=llm))
-    graph.add_node("rag",            partial(Rag,            chatllm=chatllm, qdrant_client=qdrant_client))
+    graph.add_node("research",       partial(Research,       chatllm=chatllm))
 
     graph.add_edge(START, "supervisor")
 
@@ -135,15 +133,15 @@ def create_flow_graph(chatllm, llm, qdrant_client):
         route,
         {
             "chat": "chat",
-            "rag": "rag",
+            "research": "research",
             "analyse_photos": "analyse_photos",
             "FINISH": END
         }
     )
 
     graph.add_edge("chat", END)
-    graph.add_edge("rag", END)
-    graph.add_edge("analyse_photos", "rag")
+    graph.add_edge("research", END)
+    graph.add_edge("analyse_photos", "research")  # photo → research
 
     checkpointer = MemorySaver()
     return graph.compile(checkpointer=checkpointer)

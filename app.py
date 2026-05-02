@@ -27,15 +27,6 @@ tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 async def lifespan(app: FastAPI):
     process = psutil.Process(os.getpid())
     print(f"Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
-
-    # ── Qdrant client — server-side embeddings, zero local memory ──
-    qdrant_client = QdrantClient(
-        url=os.getenv("QDRANT_URL"),
-        api_key=os.getenv("QDRANT_API_KEY")
-    )  # runs on Qdrant server
-    state.qdrant_client = qdrant_client
-    print(f"After Qdrant init: {process.memory_info().rss / 1024 / 1024:.1f} MB")
-
     # ── LLMs ──────────────────────────────────────────────────────
     state.llm = ChatGroq(
         model="meta-llama/llama-4-scout-17b-16e-instruct",
@@ -53,7 +44,7 @@ async def lifespan(app: FastAPI):
     )
     print(f"After ChatLLM: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
-    state.agent = create_flow_graph(state.chatllm, state.llm, state.qdrant_client)
+    state.agent = create_flow_graph(state.chatllm, state.llm)
     print(f"After agent: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     await tg_app.initialize()
