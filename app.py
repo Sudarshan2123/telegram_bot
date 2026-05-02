@@ -7,7 +7,6 @@ import httpx
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from flow_graph import create_flow_graph
@@ -28,10 +27,10 @@ async def lifespan(app: FastAPI):
 
     print(f"Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
-    state.llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-lite",
-        google_api_key=os.getenv("GEMINI_API_KEY"),
-        temperature=0.4,
+    state.llm = ChatGroq(
+        model="llama-3.2-11b-vision-preview",  # vision + chat
+        api_key=os.getenv("GROQ_API_KEY"),
+        temperature=0.7,
         max_tokens=1024
     )
     print(f"After LLM init: {process.memory_info().rss / 1024 / 1024:.1f} MB")
