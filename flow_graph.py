@@ -17,21 +17,35 @@ Answer questions about vehicle insurance clearly and helpfully.""")
 async def Supervisor(state: StateNode, chatllm):
     messages = state["messages"]
 
+    # check only last message for image
     last_msg = messages[-1]
     if isinstance(last_msg.content, list):
         if any(p.get("type") == "image_url" for p in last_msg.content if isinstance(p, dict)):
             print("Image detected → routing to analyse_photos")
             return {"next_action": "analyse_photos"}
 
+    # ── Strip images from history before sending to Groq ──
+    clean_messages = []
+    for msg in messages:
+        if isinstance(msg.content, list):
+            text_parts = [p["text"] for p in msg.content if p.get("type") == "text"]
+            if text_parts:
+                clean_messages.append(HumanMessage(content=" ".join(text_parts)))
+        else:
+            clean_messages.append(msg)
+
+    # ── Only send last 3 messages to keep tokens low ──
+    recent = clean_messages[-3:]
+
     system_prompt = SystemMessage(content="""You are a routing supervisor.
 Respond with ONLY one of these exact values for next_action:
-- "research" → for insurance questions, plan queries, coverage questions, recommendations
-- "chat" → for greetings, general conversation, non-insurance questions
+- "research" → for insurance questions, plan queries, coverage, recommendations
+- "chat" → for greetings, general conversation
 - "FINISH" → when task is complete
 Do NOT use any other values.""")
 
     planner = chatllm.with_structured_output(RoutePlanner)
-    response = await planner.ainvoke([system_prompt] + messages)
+    response = await planner.ainvoke([system_prompt] + recent)
     return {"next_action": response.next_action}
 
 
@@ -49,7 +63,7 @@ Provide a structured analysis that will help recommend the right insurance plan.
     return {"messages": [response]}
 
 
-async def Research(state: StateNode, chatllm):
+async def Research(state: StateNode, chatllm, llm):
     messages = state["messages"]
 
     # ── Strip images, keep AI analysis ──
@@ -63,20 +77,23 @@ async def Research(state: StateNode, chatllm):
         else:
             text_messages.append(msg)
 
-    # ── Build focused search query ──
+    # ── Only last 2 messages to keep tokens low ──
+    recent_messages = text_messages[-2:]
+
+    # ── Build query from last AI message (vehicle analysis) ──
     vehicle_context = "vehicle"
-    for msg in reversed(text_messages):
+    for msg in reversed(recent_messages):
         if hasattr(msg, 'content') and isinstance(msg.content, str) and msg.content.strip():
-            vehicle_context = msg.content[:200]
+            vehicle_context = msg.content[:150]
             break
 
-    query = f"best vehicle insurance plans India 2025 {vehicle_context[:100]}"
+    query = f"best vehicle insurance India 2025 {vehicle_context[:80]}"
     print(f"Research query: {query[:100]}")
 
     # ── DuckDuckGo search ──
     def search():
         with DDGS() as ddgs:
-            return list(ddgs.text(query, max_results=5))
+            return list(ddgs.text(query, max_results=3))
 
     results = []
     try:
@@ -85,54 +102,27 @@ async def Research(state: StateNode, chatllm):
     except Exception as e:
         print(f"Search error: {e}")
 
-    if results:
-        context = "\n\n".join([
-            f"Title: {r['title']}\nSummary: {r['body']}"
-            for r in results
-        ])
-    else:
-        context = ""
+    context = "\n\n".join([
+        f"• {r['title']}: {r['body'][:150]}"
+        for r in results
+    ]) if results else ""
 
     system_msg = SystemMessage(content=f"""You are a vehicle insurance expert in India.
-Based on the vehicle analysis in the conversation, recommend the best insurance plans.
+Recommend top 3 insurance plans based on the conversation.
+{"Search Results:\n" + context if context else "Use your knowledge."}
+For each: insurer name, premium (INR), 2 key benefits.""")
 
-{"Web Search Results:\n" + context if context else "Use your knowledge to recommend plans."}
-
-Provide:
-1. Top 3 recommended insurance plans with insurer names
-2. Premium ranges (in INR)
-3. Key benefits of each plan
-4. Why each plan suits this vehicle
-5. Claim process overview
-
-Be specific, practical and helpful.""")
-
-    # ── Debug ──
-    print(f"text_messages count: {len(text_messages)}")
-    for i, m in enumerate(text_messages):
-        print(f"  msg[{i}] type={type(m).__name__} content='{str(m.content)[:100]}'")
-
-    response = await chatllm.ainvoke([system_msg, *text_messages])
-
-    print(f"Response type: {type(response.content)}")
-    print(f"Response content: '{str(response.content)[:300]}'")
+    # ← use llm (Scout 17B) for better output
+    response = await llm.ainvoke([system_msg, *recent_messages])
 
     reply = response.content if isinstance(response.content, str) else str(response.content)
     reply = reply.strip()
 
-    # ── Fallback if LLM returns empty ──
     if not reply:
-        print("LLM returned empty — using search results directly")
-        if results:
-            reply = "Based on my research, here are recommended vehicle insurance plans in India:\n\n"
-            for r in results[:3]:
-                reply += f"{r['title']}\n{r['body'][:250]}\n\n"
-        else:
-            reply = ("Based on my knowledge, here are top vehicle insurance providers in India:\n\n"
-                     "1. HDFC ERGO — Comprehensive coverage, INR 6,000–15,000/year\n"
-                     "2. Bajaj Allianz — Good claim settlement, INR 5,500–14,000/year\n"
-                     "3. ICICI Lombard — Wide garage network, INR 6,500–16,000/year\n\n"
-                     "Please visit their websites for exact quotes based on your vehicle.")
+        reply = ("Top vehicle insurance in India:\n\n"
+                 "1. HDFC ERGO — Comprehensive, INR 6,000–15,000/year\n"
+                 "2. Bajaj Allianz — Good claims, INR 5,500–14,000/year\n"
+                 "3. ICICI Lombard — Wide network, INR 6,500–16,000/year")
 
     print(f"Final reply: {reply[:200]}")
     return {"messages": [AIMessage(content=reply)]}
@@ -152,7 +142,7 @@ def create_flow_graph(chatllm, llm):
     graph.add_node("supervisor",     partial(Supervisor,     chatllm=chatllm))
     graph.add_node("chat",           partial(chat,           chatllm=chatllm))
     graph.add_node("analyse_photos", partial(Analyse_photos, llm=llm))
-    graph.add_node("research",       partial(Research,       chatllm=chatllm))
+    graph.add_node("research",       partial(Research,       chatllm=chatllm, llm=llm))
 
     graph.add_edge(START, "supervisor")
 
