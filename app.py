@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, Request
 import httpx
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from fastembed import TextEmbedding
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
@@ -33,10 +33,7 @@ async def lifespan(app: FastAPI):
     url=os.getenv("QDRANT_URL"),       # from Qdrant Cloud dashboard
     api_key=os.getenv("QDRANT_API_KEY")
     )
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="text-embedding-004",
-        google_api_key=os.getenv("GEMINI_API_KEY")
-    )
+    embeddings = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
     vectorstore = QdrantVectorStore(
         client=client,
         collection_name="insurance",
