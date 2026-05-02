@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     )
     print(f"After ChatLLM: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
-    state.agent = create_flow_graph(state.chatllm)
+    state.agent = create_flow_graph(state.chatllm, state.llm)
     print(f"After agent: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     await tg_app.initialize()
@@ -89,7 +89,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in handle_message: {e}")
         traceback.print_exc()
-        reply = "Sorry, something went wrong. Please try again! 🙏"
+        reply = "Sorry, something went wrong. Please try again!"
 
     await update.message.reply_text(reply)
 
