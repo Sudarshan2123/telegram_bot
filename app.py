@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     api_key=os.getenv("QDRANT_API_KEY")
     )
     embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
+        model="text-embedding-004",
         google_api_key=os.getenv("GEMINI_API_KEY")
     )
     vectorstore = QdrantVectorStore(
