@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, Request
 import httpx
-from logging import Logger
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
@@ -20,7 +19,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 state = AppState()
 tg_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
+import logging
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,9 +29,9 @@ async def lifespan(app: FastAPI):
     print(f"Memory at start: {process.memory_info().rss / 1024 / 1024:.1f} MB")
 
     state.llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
+        model="gemini-2.0-flash",
         google_api_key=os.getenv("GEMINI_API_KEY"),
-        temperature=0.7,
+        temperature=0.4,
         max_tokens=1024
     )
     print(f"After LLM init: {process.memory_info().rss / 1024 / 1024:.1f} MB")
@@ -108,8 +108,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_bytes = await file.download_as_bytearray()
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
         caption = update.message.caption or "Analyze this vehicle and suggest insurance."
-        Logger.info(f"Processing document as image: {file} with MIME type {image_base64[:30]}...")
-        Logger.info(f"Caption: {caption}")
+        logger.info(f"Processing document as image: {file} with MIME type {image_base64[:30]}...")
+        logger.info(f"Caption: {caption}")
         response = await state.agent.ainvoke({
             "messages": [HumanMessage(content=[
                 {
@@ -146,8 +146,8 @@ async def handle_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
             image_bytes = await file.download_as_bytearray()
             image_base64 = base64.b64encode(image_bytes).decode("utf-8")
             caption = update.message.caption or "Analyze this vehicle and suggest insurance."
-            Logger.info(f"Processing document as image: {doc.file_name} with MIME type {doc.mime_type}")
-            Logger.info(f"Caption: {caption}")
+            logger.info(f"Processing document as image: {doc.file_name} with MIME type {doc.mime_type}")
+            logger.info(f"Caption: {caption}")
             response = await state.agent.ainvoke({
                 "messages": [HumanMessage(content=[
                     {
