@@ -15,7 +15,7 @@ async def Supervisor(state: StateNode,llm):
                                   "Based on the user query, you will decide which team member to call and what information to provide them."
                                   "if the task is completed respond with FINISH.")
 
-    planner= await llm.with_structured_output(RoutePlanner)
+    planner= llm.with_structured_output(RoutePlanner)
 
     response = await planner.ainvoke([{"role": "system", "content": system_prompt}] + state["messages"])
     return {"next_action": response.next_action}
