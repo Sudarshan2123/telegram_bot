@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI, Request
 import httpx
-from logging import logger
+from logging import Logger
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
@@ -108,7 +108,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_bytes = await file.download_as_bytearray()
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
         caption = update.message.caption or "Analyze this vehicle and suggest insurance."
-
+        Logger.info(f"Processing document as image: {file} with MIME type {image_base64[:30]}...")
+        Logger.info(f"Caption: {caption}")
         response = await state.agent.ainvoke({
             "messages": [HumanMessage(content=[
                 {
@@ -145,8 +146,8 @@ async def handle_documents(update: Update, context: ContextTypes.DEFAULT_TYPE):
             image_bytes = await file.download_as_bytearray()
             image_base64 = base64.b64encode(image_bytes).decode("utf-8")
             caption = update.message.caption or "Analyze this vehicle and suggest insurance."
-            logger.info(f"Processing document as image: {doc.file_name} with MIME type {doc.mime_type}")
-            logger.info(f"Caption: {caption}")
+            Logger.info(f"Processing document as image: {doc.file_name} with MIME type {doc.mime_type}")
+            Logger.info(f"Caption: {caption}")
             response = await state.agent.ainvoke({
                 "messages": [HumanMessage(content=[
                     {
