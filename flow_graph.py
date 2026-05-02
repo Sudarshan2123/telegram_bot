@@ -17,7 +17,7 @@ async def Supervisor(state: StateNode,llm):
 
     planner= llm.with_structured_output(RoutePlanner)
 
-    response = await planner.ainvoke([{"role": "system", "content": system_prompt}] + state["messages"])
+    response = await planner.ainvoke([system_prompt] + state["messages"]) 
     return {"next_action": response.next_action}
 
 
